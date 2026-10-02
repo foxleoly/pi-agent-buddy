@@ -16,17 +16,17 @@ import (
 // makeHeartbeat builds one heartbeat JSON from the published session state and
 // the day's pi sessions. State comes from the published session; the
 // token/cost readouts are today's totals across every session.
-func makeHeartbeat(piPid int) []byte {
+func makeHeartbeat(piPid int, herdrBin string) []byte {
 	session := loadSession(piPid)
 	ev := aggregateFileWindow(sessionPathOf(session), time.Time{}, time.Time{})
 	applyDailyUsage(&ev)
-	hb := BuildHeartbeat(session, ev)
+	hb := BuildHeartbeat(session, ev, readSubagents(herdrBin))
 	return []byte(MustJSON(hb))
 }
 
 // runUSB drives the tethered loop: push heartbeats to the device port and
 // apply device acts read back from it. Runs until interrupted.
-func runUSB(usbPath, approveText, denyText string, piPid int) {
+func runUSB(usbPath, approveText, denyText string, piPid int, herdrBin string) {
 	openBleLog()
 	f, err := os.OpenFile(usbPath, os.O_RDWR, 0)
 	if err != nil {
@@ -57,7 +57,7 @@ func runUSB(usbPath, approveText, denyText string, piPid int) {
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	for range tick.C {
-		hb := makeHeartbeat(piPid)
+		hb := makeHeartbeat(piPid, herdrBin)
 		if _, werr := f.Write(append(hb, '\n')); werr != nil {
 			bleLogf("USB: heartbeat write: %v\n", werr)
 		}

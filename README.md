@@ -21,6 +21,9 @@ on your computer to feed it.
   between pi and the sidecar, not just a footer nicety. It creates `~/.pi-buddy`
   (mode 0700), which is the channel the two halves talk through.
 - **Go 1.27+** only if you build the sidecar yourself (a prebuilt binary is available).
+- Optional: **herdr** (<https://herdr.dev>) — only used to report how many sub-agents
+  are running, since that is where pi puts them. Without it the device shows the
+  count as unknown and everything else works the same.
 
 ## Install the pi extension
 
@@ -50,7 +53,8 @@ go build -o pi-buddy-sidecar .
 ```
 
 The sidecar follows the most recently updated pi session, so no target is needed;
-`--pi-pid <pid>` pins one process when several agents are running.
+`--pi-pid <pid>` pins one process when several agents are running. Pass `--herdr ""`
+to skip the optional sub-agent lookup entirely.
 
 Useful flags:
 

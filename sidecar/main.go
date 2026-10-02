@@ -46,6 +46,7 @@ func main() {
 	var (
 		sessionPath string
 		piPid       int
+		herdrBin    string
 		act         string
 		approveText string
 		denyText    string
@@ -59,6 +60,7 @@ func main() {
 	)
 	flag.StringVar(&sessionPath, "session", "", "pi session JSONL path (default: the published session, then $PI_SESSION_FILE)")
 	flag.IntVar(&piPid, "pi-pid", 0, "follow this pi process (default: the most recently updated one)")
+	flag.StringVar(&herdrBin, "herdr", "herdr", "herdr binary for sub-agent counts; optional, empty disables")
 	flag.StringVar(&act, "act", "", "perform a device act now: approve|deny|interrupt (dry-run unless --exec)")
 	flag.StringVar(&approveText, "approve", "", "text sent on approve (default yes)")
 	flag.StringVar(&denyText, "deny", "", "text sent on deny (default no)")
@@ -70,6 +72,14 @@ func main() {
 	flag.StringVar(&token, "token", "", "link code for --ws (default: ~/.pi-buddy/token, created on first use)")
 	flag.BoolVar(&showToken, "show-token", false, "print the link code and exit")
 	flag.Parse()
+
+	// herdr is optional: it is how pi spawns sub-agents, so it enriches the
+	// sub-agent count, but nothing else depends on it. Checked once here so a
+	// missing herdr does not spawn a failing process on every heartbeat.
+	if !herdrAvailable(herdrBin) {
+		bleLogf("herdr not found (%q); sub-agent counts will read as unknown\n", herdrBin)
+		herdrBin = ""
+	}
 
 	// Printing on demand beats reading it out of a scrolling log, and it is the
 	// only workable way to read the code when the sidecar runs without a terminal.
@@ -89,12 +99,12 @@ func main() {
 	}
 
 	if wsMode {
-		runWS(wsAddr, approveText, denyText, token, piPid)
+		runWS(wsAddr, approveText, denyText, token, piPid, herdrBin)
 		return
 	}
 
 	if usbMode {
-		runUSB(usbPath, approveText, denyText, piPid)
+		runUSB(usbPath, approveText, denyText, piPid, herdrBin)
 		return
 	}
 
@@ -123,7 +133,7 @@ func main() {
 
 	ev := aggregateFileWindow(path, time.Time{}, time.Time{})
 	applyDailyUsage(&ev)
-	hb := BuildHeartbeat(session, ev)
+	hb := BuildHeartbeat(session, ev, readSubagents(herdrBin))
 
 	if session != nil {
 		fmt.Fprintf(os.Stderr, "session: pi pid %d (%s) cwd=%s jsonl=%s\n",

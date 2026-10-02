@@ -227,10 +227,10 @@ type Heartbeat struct {
 	StopReason   string  `json:"stop_reason,omitempty"`
 }
 
-// BuildHeartbeat composes a heartbeat from the published session state and the
-// JSONL events. Sub-agent counts are not available once herdr is gone, so
-// SubAvailable is always false and the device shows the count as unknown.
-func BuildHeartbeat(session *SessionState, ev Events) Heartbeat {
+// BuildHeartbeat composes a heartbeat from the published session state, the
+// JSONL events, and the sub-agent count — which is only known when herdr is
+// installed.
+func BuildHeartbeat(session *SessionState, ev Events, subs SubagentCount) Heartbeat {
 	cwd, title := "", ""
 	if session != nil {
 		cwd = session.Cwd
@@ -246,7 +246,9 @@ func BuildHeartbeat(session *SessionState, ev Events) Heartbeat {
 		Tool:         ev.LastTool,
 		Arg:          ev.LastArg,
 		Thinking:     ev.Thinking,
-		SubAvailable: false,
+		SubAvailable: subs.Available,
+		SubTotal:     subs.Total,
+		SubWorking:   subs.Working,
 		Tokens:       ev.Tokens,
 		InTokens:     ev.InTokens,
 		OutTokens:    ev.OutTokens,

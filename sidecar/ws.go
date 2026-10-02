@@ -54,7 +54,7 @@ func hostname() string {
 
 // runWS serves the WebSocket tether on listen (e.g. ":51820") and advertises
 // itself over mDNS so the device can find us without a hard-coded IP.
-func runWS(listen, approveText, denyText, tokenFlag string, piPid int) {
+func runWS(listen, approveText, denyText, tokenFlag string, piPid int, herdrBin string) {
 	openBleLog()
 
 	// Without a link code the endpoint is reachable by every host on the LAN, and
@@ -126,7 +126,7 @@ func runWS(listen, approveText, denyText, tokenFlag string, piPid int) {
 			bleLogf("WS: superseding the previous device connection\n")
 			_ = old.Close()
 		}
-		serveWS(conn, approveText, denyText, piPid)
+		serveWS(conn, approveText, denyText, piPid, herdrBin)
 	})
 
 	srv := &http.Server{Addr: listen, Handler: mux}
@@ -195,7 +195,7 @@ const (
 )
 
 // serveWS pushes heartbeats and reads acts for one device connection.
-func serveWS(conn *websocket.Conn, approveText, denyText string, piPid int) {
+func serveWS(conn *websocket.Conn, approveText, denyText string, piPid int, herdrBin string) {
 	defer conn.Close()
 	defer noteLinkClosed()
 	defer wsLive.release(conn)
@@ -231,7 +231,7 @@ func serveWS(conn *websocket.Conn, approveText, denyText string, piPid int) {
 			return
 		case <-heartbeat.C:
 			_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
-			if err := conn.WriteMessage(websocket.TextMessage, makeHeartbeat(piPid)); err != nil {
+			if err := conn.WriteMessage(websocket.TextMessage, makeHeartbeat(piPid, herdrBin)); err != nil {
 				bleLogf("WS: heartbeat write: %v\n", err)
 				return
 			}
