@@ -19,7 +19,7 @@ on your computer to feed it.
 - A running **pi** session.
 - **herdr**, the agent multiplexer the sidecar reads and drives — install it from
   <https://herdr.dev> (for example `brew install herdr`).
-- **Go 1.27+** to build the sidecar.
+- **Go 1.27+** only if you build the sidecar yourself (a prebuilt binary is available).
 
 ## Install the pi extension
 
@@ -29,7 +29,18 @@ pi install git:github.com/foxleoly/pi-agent-buddy@v0.1.0
 
 Then `/pibuddy` reports the link state and offers to copy the pair code.
 
-## Build and run the sidecar
+## Run the sidecar
+
+Download the binary for your platform from the
+[latest release](https://github.com/foxleoly/pi-agent-buddy/releases/latest)
+(`pi-buddy-sidecar-<os>-<arch>`, with `checksums.txt`):
+
+```bash
+chmod +x pi-buddy-sidecar-darwin-arm64
+./pi-buddy-sidecar-darwin-arm64 --ws --ws-addr :51820 --target <pane>
+```
+
+Or build it yourself:
 
 ```bash
 cd sidecar

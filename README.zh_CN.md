@@ -17,7 +17,7 @@ AI Passport 设备负责显示你的 Agent 正在做什么、并让你用按键�
 
 - 一个正在运行的 **pi** 会话。
 - **herdr**：sidecar 读取并驱动它，从 <https://herdr.dev> 安装（例如 `brew install herdr`）。
-- 编译 sidecar 需要 **Go 1.27+**。
+- 只有你自己编译 sidecar 时才需要 **Go 1.27+**（也可直接下载预编译二进制）。
 
 ## 安装 pi 扩展
 
@@ -27,7 +27,17 @@ pi install git:github.com/foxleoly/pi-agent-buddy@v0.1.0
 
 之后 `/pibuddy` 会汇报链路状态，并提供把配对码复制到剪贴板。
 
-## 编译并运行 sidecar
+## 运行 sidecar
+
+从[最新 Release](https://github.com/foxleoly/pi-agent-buddy/releases/latest) 下载对应平台的
+二进制（`pi-buddy-sidecar-<os>-<arch>`，附 `checksums.txt`）：
+
+```bash
+chmod +x pi-buddy-sidecar-darwin-arm64
+./pi-buddy-sidecar-darwin-arm64 --ws --ws-addr :51820 --target <pane>
+```
+
+也可以自行编译：
 
 ```bash
 cd sidecar
