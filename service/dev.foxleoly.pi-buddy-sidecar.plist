@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd does not expand ~ or environment variables, so @HOME@ is substituted
+  before installing (see the README). @PANE@ is the herdr pane the device's
+  buttons control and is required.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>dev.foxleoly.pi-buddy-sidecar</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>@HOME@/.local/bin/pi-buddy-sidecar</string>
+    <string>--ws</string>
+    <string>--ws-addr</string>
+    <string>:51820</string>
+    <string>--target</string>
+    <string>@PANE@</string>
+  </array>
+
+  <!-- The sidecar shells out to herdr, and launchd's default PATH omits
+       Homebrew (/opt/homebrew/bin on Apple silicon, /usr/local/bin on Intel). -->
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>@HOME@/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>@HOME@/.pi-buddy/sidecar.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@HOME@/.pi-buddy/sidecar.err.log</string>
+</dict>
+</plist>

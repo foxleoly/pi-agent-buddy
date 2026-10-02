@@ -56,6 +56,57 @@ sidecar 的这个会话。
 ./pi-buddy-sidecar --usb --usb-path /dev/ttyACM0 --target w4:p1   # 走有线的 USB 通道
 ```
 
+## 作为后台服务运行
+
+两个服务定义都在 [`service/`](service/)。把二进制放到 `~/.local/bin/pi-buddy-sidecar`，并把
+`@PANE@` 换成设备按键要控制的 herdr pane（这里用 `w4:p1`）。
+
+### macOS（launchd）
+
+launchd 既不展开 `~` 也不展开环境变量，所以先把 plist 渲染一遍：
+
+```bash
+mkdir -p ~/.local/bin ~/Library/LaunchAgents
+mv pi-buddy-sidecar-darwin-arm64 ~/.local/bin/pi-buddy-sidecar
+sed "s|@HOME@|$HOME|g; s|@PANE@|w4:p1|g" \
+  service/dev.foxleoly.pi-buddy-sidecar.plist \
+  > ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
+launchctl print "gui/$(id -u)/dev.foxleoly.pi-buddy-sidecar" | head -20
+```
+
+卸载：
+
+```bash
+launchctl bootout "gui/$(id -u)/dev.foxleoly.pi-buddy-sidecar"
+rm ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
+```
+
+### Linux（systemd 用户单元）
+
+```bash
+mkdir -p ~/.local/bin ~/.config/systemd/user
+mv pi-buddy-sidecar-linux-amd64 ~/.local/bin/pi-buddy-sidecar
+sed "s|@PANE@|w4:p1|g" service/pi-buddy-sidecar.service \
+  > ~/.config/systemd/user/pi-buddy-sidecar.service
+systemctl --user daemon-reload
+systemctl --user enable --now pi-buddy-sidecar
+systemctl --user status pi-buddy-sidecar
+loginctl enable-linger "$USER"    # 没有登录会话时也保持运行
+```
+
+卸载：
+
+```bash
+systemctl --user disable --now pi-buddy-sidecar
+rm ~/.config/systemd/user/pi-buddy-sidecar.service
+```
+
+两个单元都会在 sidecar 退出后重启它，并且都显式设了 `PATH` —— launchd 任务和 systemd 用户
+单元默认的 `PATH` 很精简，会漏掉 Homebrew，而 sidecar 要调 `herdr`。日志方面 sidecar 自己会写
+`~/.pi-buddy/ble.log`；launchd 那份另外把 stdout/stderr 收集到 `~/.pi-buddy/sidecar.out.log`
+与 `~/.pi-buddy/sidecar.err.log`。
+
 ## 设备怎么找到 sidecar
 
 sidecar 通过 mDNS 广播 `_pibuddy._tcp`，并监听 `--ws-addr` 指定的端口。设备在同一网络里

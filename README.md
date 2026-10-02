@@ -59,6 +59,59 @@ Useful flags:
 ./pi-buddy-sidecar --usb --usb-path /dev/ttyACM0 --target w4:p1   # tethered instead of Wi-Fi
 ```
 
+## Run it as a service
+
+Both service definitions live in [`service/`](service/). Put the binary at
+`~/.local/bin/pi-buddy-sidecar`, and replace `@PANE@` with the herdr pane the device's
+buttons should control (here `w4:p1`).
+
+### macOS (launchd)
+
+launchd expands neither `~` nor environment variables, so the plist is rendered first:
+
+```bash
+mkdir -p ~/.local/bin ~/Library/LaunchAgents
+mv pi-buddy-sidecar-darwin-arm64 ~/.local/bin/pi-buddy-sidecar
+sed "s|@HOME@|$HOME|g; s|@PANE@|w4:p1|g" \
+  service/dev.foxleoly.pi-buddy-sidecar.plist \
+  > ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
+launchctl print "gui/$(id -u)/dev.foxleoly.pi-buddy-sidecar" | head -20
+```
+
+Remove it again:
+
+```bash
+launchctl bootout "gui/$(id -u)/dev.foxleoly.pi-buddy-sidecar"
+rm ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
+```
+
+### Linux (systemd user unit)
+
+```bash
+mkdir -p ~/.local/bin ~/.config/systemd/user
+mv pi-buddy-sidecar-linux-amd64 ~/.local/bin/pi-buddy-sidecar
+sed "s|@PANE@|w4:p1|g" service/pi-buddy-sidecar.service \
+  > ~/.config/systemd/user/pi-buddy-sidecar.service
+systemctl --user daemon-reload
+systemctl --user enable --now pi-buddy-sidecar
+systemctl --user status pi-buddy-sidecar
+loginctl enable-linger "$USER"    # keep it up with no open login session
+```
+
+Remove it again:
+
+```bash
+systemctl --user disable --now pi-buddy-sidecar
+rm ~/.config/systemd/user/pi-buddy-sidecar.service
+```
+
+Both units restart the sidecar if it exits, and both set `PATH` so the sidecar can find
+`herdr` — a launchd job and a user systemd unit otherwise start with a minimal `PATH`
+that omits Homebrew. The sidecar writes `~/.pi-buddy/ble.log` itself; the launchd plist
+additionally captures stdout/stderr in `~/.pi-buddy/sidecar.out.log` and
+`~/.pi-buddy/sidecar.err.log`.
+
 ## How the device finds the sidecar
 
 The sidecar advertises `_pibuddy._tcp` over mDNS and listens on the port given to
