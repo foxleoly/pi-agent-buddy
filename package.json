@@ -1,0 +1,10 @@
+{
+  "name": "pi-agent-buddy",
+  "version": "0.1.0",
+  "description": "pi extension: show the Pi Agent Buddy device link in the footer and copy the pair code on demand.",
+  "keywords": ["pi-package"],
+  "license": "MIT",
+  "pi": {
+    "extensions": ["./extensions/pibuddy.ts"]
+  }
+}
