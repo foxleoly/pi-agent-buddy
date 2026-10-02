@@ -15,12 +15,12 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/grandcat/zeroconf"
 )
 
 // mDNS service the device browses for. The registration type needs the
@@ -30,6 +30,7 @@ import (
 const (
 	wsMdnsService = "_pibuddy"
 	wsMdnsRegType = wsMdnsService + "._tcp"
+	wsMdnsDomain  = "local."
 )
 
 // mdnsInstance names this registration. 'dns-sd' instance names are unique per
@@ -53,11 +54,11 @@ func hostname() string {
 
 // runWS serves the WebSocket tether on listen (e.g. ":51820") and advertises
 // itself over mDNS so the device can find us without a hard-coded IP.
-func runWS(listen, target, approveText, denyText, herdrBin, tokenFlag string) {
+func runWS(listen, approveText, denyText, tokenFlag string, piPid int) {
 	openBleLog()
 
 	// Without a link code the endpoint is reachable by every host on the LAN, and
-	// connecting to it runs herdr input, so a code is always required.
+	// connecting to it runs the device's acts, so a code is always required.
 	tokenPath, err := defaultTokenPath()
 	if err != nil {
 		bleLogf("WS: cannot locate the link code file: %v\n", err)
@@ -76,20 +77,28 @@ func runWS(listen, target, approveText, denyText, herdrBin, tokenFlag string) {
 		bleLogf("WS: bad listen addr %q: %v\n", listen, err)
 		return
 	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		bleLogf("WS: bad port %q: %v\n", portStr, err)
+		return
+	}
 
-	// Advertise mDNS _pibuddy._tcp.local (instance "pibuddy") on this port.
-	// macOS's dns-sd has no daemon mode and is not supervised; if it goes away
-	// the advertisement goes with it and the device silently loses discovery.
-	// Keep re-registering for as long as we serve.
-	go superviseMDNS(portStr)
+	// Advertise _pibuddy._tcp.local so the device can find us without a
+	// hard-coded IP. This used to shell out to macOS's `dns-sd`, which does not
+	// exist on Linux; the library keeps the registration alive on every platform
+	// and needs no supervising.
+	mdns := advertiseMDNS(port)
+	if mdns != nil {
+		defer mdns.Shutdown()
+	}
 
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		// The device is a raw WebSocket client and sends no Origin header, so
 		// allow exactly that case. Rejecting Origin-bearing requests stops a web
-		// page the user visits (or a DNS-rebinding probe) from driving herdr
-		// through this endpoint.
+		// page the user visits (or a DNS-rebinding probe) from driving the
+		// device's acts through this endpoint.
 		CheckOrigin: func(r *http.Request) bool {
 			return r.Header.Get("Origin") == ""
 		},
@@ -117,7 +126,7 @@ func runWS(listen, target, approveText, denyText, herdrBin, tokenFlag string) {
 			bleLogf("WS: superseding the previous device connection\n")
 			_ = old.Close()
 		}
-		serveWS(conn, target, approveText, denyText, herdrBin)
+		serveWS(conn, approveText, denyText, piPid)
 	})
 
 	srv := &http.Server{Addr: listen, Handler: mux}
@@ -129,25 +138,18 @@ func runWS(listen, target, approveText, denyText, herdrBin, tokenFlag string) {
 	}
 }
 
-// superviseMDNS keeps a `dns-sd -R` registration alive for our port. The device
-// finds us only while the service is registered, so a single unsupervised exec
-// leaves the link silently broken as soon as dns-sd stops.
-func superviseMDNS(port string) {
-	const restartDelay = 2 * time.Second
-	instance := mdnsInstance(port)
-	for {
-		cmd := exec.Command("dns-sd", "-R", instance, wsMdnsRegType, "local", port)
-		if err := cmd.Start(); err != nil {
-			bleLogf("WS: mDNS advertise failed: %v (device must reach us some other way)\n", err)
-			time.Sleep(restartDelay)
-			continue
-		}
-		bleLogf("WS: advertising mDNS %s.local (instance %s) on port %s (pid %d)\n",
-			wsMdnsRegType, instance, port, cmd.Process.Pid)
-		werr := cmd.Wait()
-		bleLogf("WS: mDNS registration exited: %v; re-registering in %s\n", werr, restartDelay)
-		time.Sleep(restartDelay)
+// advertiseMDNS registers the mDNS service the device browses for. The
+// registration is kept alive by the library for as long as the server is not
+// shut down, so there is no supervisor loop to keep running.
+func advertiseMDNS(port int) *zeroconf.Server {
+	instance := mdnsInstance(strconv.Itoa(port))
+	server, err := zeroconf.Register(instance, wsMdnsService, wsMdnsDomain, port, []string{"pi-buddy=1"}, nil)
+	if err != nil {
+		bleLogf("WS: mDNS advertise failed: %v (the device must reach us some other way)\n", err)
+		return nil
 	}
+	bleLogf("WS: advertising mDNS %s.local (instance %s) on port %d\n", wsMdnsRegType, instance, port)
+	return server
 }
 
 // wsSessions enforces one live device connection. A reconnect (reboot, Wi-Fi
@@ -193,7 +195,7 @@ const (
 )
 
 // serveWS pushes heartbeats and reads acts for one device connection.
-func serveWS(conn *websocket.Conn, target, approveText, denyText, herdrBin string) {
+func serveWS(conn *websocket.Conn, approveText, denyText string, piPid int) {
 	defer conn.Close()
 	defer noteLinkClosed()
 	defer wsLive.release(conn)
@@ -214,7 +216,7 @@ func serveWS(conn *websocket.Conn, target, approveText, denyText, herdrBin strin
 				bleLogf("WS: read: %v\n", err)
 				return
 			}
-			handleDeviceLine(string(raw), target, approveText, denyText, herdrBin)
+			handleDeviceLine(string(raw), approveText, denyText)
 		}
 	}()
 
@@ -229,7 +231,7 @@ func serveWS(conn *websocket.Conn, target, approveText, denyText, herdrBin strin
 			return
 		case <-heartbeat.C:
 			_ = conn.SetWriteDeadline(time.Now().Add(wsWriteWait))
-			if err := conn.WriteMessage(websocket.TextMessage, makeHeartbeat(herdrBin)); err != nil {
+			if err := conn.WriteMessage(websocket.TextMessage, makeHeartbeat(piPid)); err != nil {
 				bleLogf("WS: heartbeat write: %v\n", err)
 				return
 			}
@@ -245,7 +247,3 @@ func serveWS(conn *websocket.Conn, target, approveText, denyText, herdrBin strin
 		}
 	}
 }
-
-// portOf is a small helper (kept for clarity if listen is ever host:port).
-var _ = strconv.Itoa
-var _ = fmt.Sprintf

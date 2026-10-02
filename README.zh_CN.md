@@ -10,13 +10,14 @@ AI Passport 设备负责显示你的 Agent 正在做什么、并让你用按键�
 
 | 部分 | 作用 |
 | --- | --- |
-| [`extensions/pibuddy.ts`](extensions/pibuddy.ts) | pi 扩展：在 pi 底部状态栏显示链路状态，`/pibuddy` 汇报状态并提供复制配对码。 |
-| [`sidecar/`](sidecar/) | Go 程序：读取你的 pi 会话与 `herdr` 的 agent 快照，把心跳推给设备，并把设备按键转成 `herdr` 输入。 |
+| [`extensions/pibuddy.ts`](extensions/pibuddy.ts) | pi 扩展：发布会话状态、执行设备动作、在 pi 底部状态栏显示链路，`/pibuddy` 提供复制配对码。 |
+| [`sidecar/`](sidecar/) | Go 程序：读取发布的状态与会话 JSONL，把心跳推给设备，并把设备按键交回扩展执行。 |
 
 ## 前置条件
 
 - 一个正在运行的 **pi** 会话。
-- **herdr**：sidecar 读取并驱动它，从 <https://herdr.dev> 安装（例如 `brew install herdr`）。
+- 一个**已安装本包**且正在运行的 **pi** 会话：扩展是 pi 与 sidecar 之间的桥，不只是
+  底部栏的装饰。它会以 0700 创建 `~/.pi-buddy`，两半就靠这个目录通信。
 - 只有你自己编译 sidecar 时才需要 **Go 1.27+**（也可直接下载预编译二进制）。
 
 ## 安装 pi 扩展
@@ -34,7 +35,7 @@ pi install git:github.com/foxleoly/pi-agent-buddy@v0.1.0
 
 ```bash
 chmod +x pi-buddy-sidecar-darwin-arm64
-./pi-buddy-sidecar-darwin-arm64 --ws --ws-addr :51820 --target <pane>
+./pi-buddy-sidecar-darwin-arm64 --ws --ws-addr :51820
 ```
 
 也可以自行编译：
@@ -42,24 +43,24 @@ chmod +x pi-buddy-sidecar-darwin-arm64
 ```bash
 cd sidecar
 go build -o pi-buddy-sidecar .
-./pi-buddy-sidecar --ws --ws-addr :51820 --target <pane>
+./pi-buddy-sidecar --ws --ws-addr :51820
 ```
 
-`--target` 是必需的。不带它时，设备按键会打到当前**聚焦**的 herdr pane，而那可能正是跑
-sidecar 的这个会话。
+sidecar 会跟随**最近更新**的那个 pi 会话，所以不需要指定目标；多个 agent 同时跑时可用
+`--pi-pid <pid>` 钉住某一个。
 
 常用参数：
 
 ```bash
 ./pi-buddy-sidecar --show-token                   # 打印设备配网页要的链接码
-./pi-buddy-sidecar --ws --ws-addr :51820 --target w4:p1
-./pi-buddy-sidecar --usb --usb-path /dev/ttyACM0 --target w4:p1   # 走有线的 USB 通道
+./pi-buddy-sidecar --ws --ws-addr :51820
+./pi-buddy-sidecar --ws --ws-addr :51820 --pi-pid 41234     # 钉住某个 pi 进程
+./pi-buddy-sidecar --usb --usb-path /dev/ttyACM0            # 走有线的 USB 通道
 ```
 
 ## 作为后台服务运行
 
-两个服务定义都在 [`service/`](service/)。把二进制放到 `~/.local/bin/pi-buddy-sidecar`，并把
-`@PANE@` 换成设备按键要控制的 herdr pane（这里用 `w4:p1`）。
+两个服务定义都在 [`service/`](service/)。把二进制放到 `~/.local/bin/pi-buddy-sidecar`。
 
 ### macOS（launchd）
 
@@ -68,7 +69,7 @@ launchd 既不展开 `~` 也不展开环境变量，所以先把 plist 渲染一
 ```bash
 mkdir -p ~/.local/bin ~/Library/LaunchAgents
 mv pi-buddy-sidecar-darwin-arm64 ~/.local/bin/pi-buddy-sidecar
-sed "s|@HOME@|$HOME|g; s|@PANE@|w4:p1|g" \
+sed "s|@HOME@|$HOME|g" \
   service/dev.foxleoly.pi-buddy-sidecar.plist \
   > ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
@@ -87,7 +88,7 @@ rm ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
 ```bash
 mkdir -p ~/.local/bin ~/.config/systemd/user
 mv pi-buddy-sidecar-linux-amd64 ~/.local/bin/pi-buddy-sidecar
-sed "s|@PANE@|w4:p1|g" service/pi-buddy-sidecar.service \
+cp service/pi-buddy-sidecar.service \
   > ~/.config/systemd/user/pi-buddy-sidecar.service
 systemctl --user daemon-reload
 systemctl --user enable --now pi-buddy-sidecar
@@ -102,8 +103,7 @@ systemctl --user disable --now pi-buddy-sidecar
 rm ~/.config/systemd/user/pi-buddy-sidecar.service
 ```
 
-两个单元都会在 sidecar 退出后重启它，并且都显式设了 `PATH` —— launchd 任务和 systemd 用户
-单元默认的 `PATH` 很精简，会漏掉 Homebrew，而 sidecar 要调 `herdr`。日志方面 sidecar 自己会写
+两个单元都会在 sidecar 退出后重启它。日志方面 sidecar 自己会写
 `~/.pi-buddy/ble.log`；launchd 那份另外把 stdout/stderr 收集到 `~/.pi-buddy/sidecar.out.log`
 与 `~/.pi-buddy/sidecar.err.log`。
 

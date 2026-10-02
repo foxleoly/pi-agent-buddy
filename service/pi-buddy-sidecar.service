@@ -5,15 +5,11 @@ After=network-online.target
 
 [Service]
 Type=simple
-# @PANE@ is the herdr pane the device's buttons control (for example w4:p1).
-# It is required: without --target an act goes to the focused pane, which may be
-# the very session running the sidecar.
-ExecStart=%h/.local/bin/pi-buddy-sidecar --ws --ws-addr :51820 --target @PANE@
+# The sidecar follows the most recently updated pi session; add --pi-pid <pid> to
+# pin one process when several agents are running.
+ExecStart=%h/.local/bin/pi-buddy-sidecar --ws --ws-addr :51820
 Restart=always
 RestartSec=2
-# The sidecar shells out to herdr, and a user unit gets a minimal PATH; add the
-# directories herdr may live in.
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target

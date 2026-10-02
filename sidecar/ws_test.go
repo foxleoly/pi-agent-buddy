@@ -9,7 +9,8 @@ import (
 // keep two sidecars from competing for one registration.
 
 func TestMdnsInstanceIsStableForOnePort(t *testing.T) {
-	if mdnsInstance("51820") != mdnsInstance("51820") {
+	first := mdnsInstance("51820")
+	if first != mdnsInstance("51820") {
 		t.Fatal("instance name must be stable for the same port")
 	}
 }

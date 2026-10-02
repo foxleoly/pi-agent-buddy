@@ -70,41 +70,17 @@ func TestAggregateBasic(t *testing.T) {
 	}
 }
 
-func TestNormalizeAgentState(t *testing.T) {
-	cases := map[string]string{
-		"working": "running",
-		"idle":    "idle",
-		"unknown": "offline",
-		"":        "offline",
-		"weird":   "weird",
+// The published idle flag is the only state source now that herdr is gone: no
+// publisher means pi is not running.
+func TestSessionStateState(t *testing.T) {
+	if got := (*SessionState)(nil).State(); got != "offline" {
+		t.Fatalf("nil session state = %q, want offline", got)
 	}
-	for in, want := range cases {
-		if got := NormalizeAgentState(in); got != want {
-			t.Fatalf("NormalizeAgentState(%q) = %q, want %q", in, got, want)
-		}
+	if got := (&SessionState{Idle: true}).State(); got != "idle" {
+		t.Fatalf("idle session state = %q, want idle", got)
 	}
-}
-
-func TestHerdrSnapshotFocus(t *testing.T) {
-	raw := `{"id":"cli:api:snapshot","result":{"snapshot":{"agents":[
-		{"agent":"pi","agent_status":"idle","pane_id":"w4:p1","agent_session":{"value":"/a.jsonl"}},
-		{"agent":"pi","agent_status":"working","pane_id":"w4:p9","focused":true,
-		 "terminal_title":"π - ai-passport","cwd":"/w","agent_session":{"value":"/c.jsonl"}}
-	],"focused_pane_id":"w4:p9"}}}`
-	var s HerdrSnapshot
-	if err := json.Unmarshal([]byte(raw), &s); err != nil {
-		t.Fatalf("unmarshal: %v", err)
-	}
-	f := s.Focus()
-	if f == nil || f.PaneID != "w4:p9" {
-		t.Fatalf("focus = %+v, want pane w4:p9", f)
-	}
-	if f.AgentSession.Value != "/c.jsonl" {
-		t.Fatalf("focus jsonl = %q, want /c.jsonl", f.AgentSession.Value)
-	}
-	total, working := s.AgentSummary()
-	if total != 2 || working != 1 {
-		t.Fatalf("summary = (%d,%d), want (2,1)", total, working)
+	if got := (&SessionState{Idle: false}).State(); got != "running" {
+		t.Fatalf("working session state = %q, want running", got)
 	}
 }
 

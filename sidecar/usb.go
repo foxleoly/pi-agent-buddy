@@ -13,24 +13,20 @@ import (
 	"time"
 )
 
-// makeHeartbeat builds one heartbeat JSON from herdr + the day's pi sessions.
-// State comes from the focused session; the token/cost readouts are today's
-// totals across every session.
-func makeHeartbeat(herdrBin string) []byte {
-	snap, focus := loadSnapshot(herdrBin)
-	agentsTotal, agentsWorking := 0, 0
-	if snap != nil {
-		agentsTotal, agentsWorking = snap.AgentSummary()
-	}
-	ev := aggregateFileWindow(sessionPathOf(focus), time.Time{}, time.Time{})
+// makeHeartbeat builds one heartbeat JSON from the published session state and
+// the day's pi sessions. State comes from the published session; the
+// token/cost readouts are today's totals across every session.
+func makeHeartbeat(piPid int) []byte {
+	session := loadSession(piPid)
+	ev := aggregateFileWindow(sessionPathOf(session), time.Time{}, time.Time{})
 	applyDailyUsage(&ev)
-	hb := BuildHeartbeat(focus, ev, agentsTotal, agentsWorking)
+	hb := BuildHeartbeat(session, ev)
 	return []byte(MustJSON(hb))
 }
 
 // runUSB drives the tethered loop: push heartbeats to the device port and
 // apply device acts read back from it. Runs until interrupted.
-func runUSB(usbPath, target, approveText, denyText, herdrBin string) {
+func runUSB(usbPath, approveText, denyText string, piPid int) {
 	openBleLog()
 	f, err := os.OpenFile(usbPath, os.O_RDWR, 0)
 	if err != nil {
@@ -48,12 +44,12 @@ func runUSB(usbPath, target, approveText, denyText, herdrBin string) {
 			if rerr != nil {
 				// Port error / closed: act on the partial line, then back off.
 				if strings.TrimSpace(line) != "" {
-					handleDeviceLine(line, target, approveText, denyText, herdrBin)
+					handleDeviceLine(line, approveText, denyText)
 				}
 				time.Sleep(500 * time.Millisecond)
 				continue
 			}
-			handleDeviceLine(line, target, approveText, denyText, herdrBin)
+			handleDeviceLine(line, approveText, denyText)
 		}
 	}()
 
@@ -61,7 +57,7 @@ func runUSB(usbPath, target, approveText, denyText, herdrBin string) {
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	for range tick.C {
-		hb := makeHeartbeat(herdrBin)
+		hb := makeHeartbeat(piPid)
 		if _, werr := f.Write(append(hb, '\n')); werr != nil {
 			bleLogf("USB: heartbeat write: %v\n", werr)
 		}
@@ -74,7 +70,7 @@ func runUSB(usbPath, target, approveText, denyText, herdrBin string) {
 
 // handleDeviceLine parses a line the device sent; only {"cmd":"act"} acts are
 // acted on. Echoed heartbeats and console log lines are ignored.
-func handleDeviceLine(raw, target, approveText, denyText, herdrBin string) {
+func handleDeviceLine(raw, approveText, denyText string) {
 	line := strings.TrimSpace(raw)
 	if line == "" || !strings.HasPrefix(line, "{") {
 		return
@@ -83,5 +79,5 @@ func handleDeviceLine(raw, target, approveText, denyText, herdrBin string) {
 	if json.Unmarshal([]byte(line), &a) != nil || a.Cmd != "act" {
 		return
 	}
-	handleAct(a, target, approveText, denyText, herdrBin)
+	handleAct(a, approveText, denyText)
 }

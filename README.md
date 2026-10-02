@@ -11,14 +11,15 @@ on your computer to feed it.
 
 | Piece | What it does |
 | --- | --- |
-| [`extensions/pibuddy.ts`](extensions/pibuddy.ts) | pi extension: shows the link state in pi's footer, and `/pibuddy` reports it and copies the pair code. |
-| [`sidecar/`](sidecar/) | Go program: reads your pi session and its `herdr` agent snapshot, streams heartbeats to the device, and turns device button presses into `herdr` input. |
+| [`extensions/pibuddy.ts`](extensions/pibuddy.ts) | pi extension: publishes the live session state, runs the device's acts, shows the link in pi's footer, and copies the pair code with `/pibuddy`. |
+| [`sidecar/`](sidecar/) | Go program: reads the published state and the session JSONL, streams heartbeats to the device, and hands button presses back to the extension. |
 
 ## Requirements
 
 - A running **pi** session.
-- **herdr**, the agent multiplexer the sidecar reads and drives — install it from
-  <https://herdr.dev> (for example `brew install herdr`).
+- A running **pi** session with this package installed: the extension is the bridge
+  between pi and the sidecar, not just a footer nicety. It creates `~/.pi-buddy`
+  (mode 0700), which is the channel the two halves talk through.
 - **Go 1.27+** only if you build the sidecar yourself (a prebuilt binary is available).
 
 ## Install the pi extension
@@ -37,7 +38,7 @@ Download the binary for your platform from the
 
 ```bash
 chmod +x pi-buddy-sidecar-darwin-arm64
-./pi-buddy-sidecar-darwin-arm64 --ws --ws-addr :51820 --target <pane>
+./pi-buddy-sidecar-darwin-arm64 --ws --ws-addr :51820
 ```
 
 Or build it yourself:
@@ -45,25 +46,25 @@ Or build it yourself:
 ```bash
 cd sidecar
 go build -o pi-buddy-sidecar .
-./pi-buddy-sidecar --ws --ws-addr :51820 --target <pane>
+./pi-buddy-sidecar --ws --ws-addr :51820
 ```
 
-`--target` is required. Without it a device button press is sent to the *focused*
-herdr pane, which may be the very session running the sidecar.
+The sidecar follows the most recently updated pi session, so no target is needed;
+`--pi-pid <pid>` pins one process when several agents are running.
 
 Useful flags:
 
 ```bash
 ./pi-buddy-sidecar --show-token                   # print the link code the device asks for
-./pi-buddy-sidecar --ws --ws-addr :51820 --target w4:p1
-./pi-buddy-sidecar --usb --usb-path /dev/ttyACM0 --target w4:p1   # tethered instead of Wi-Fi
+./pi-buddy-sidecar --ws --ws-addr :51820
+./pi-buddy-sidecar --ws --ws-addr :51820 --pi-pid 41234     # pin one pi process
+./pi-buddy-sidecar --usb --usb-path /dev/ttyACM0            # tethered instead of Wi-Fi
 ```
 
 ## Run it as a service
 
 Both service definitions live in [`service/`](service/). Put the binary at
-`~/.local/bin/pi-buddy-sidecar`, and replace `@PANE@` with the herdr pane the device's
-buttons should control (here `w4:p1`).
+`~/.local/bin/pi-buddy-sidecar`.
 
 ### macOS (launchd)
 
@@ -72,7 +73,7 @@ launchd expands neither `~` nor environment variables, so the plist is rendered 
 ```bash
 mkdir -p ~/.local/bin ~/Library/LaunchAgents
 mv pi-buddy-sidecar-darwin-arm64 ~/.local/bin/pi-buddy-sidecar
-sed "s|@HOME@|$HOME|g; s|@PANE@|w4:p1|g" \
+sed "s|@HOME@|$HOME|g" \
   service/dev.foxleoly.pi-buddy-sidecar.plist \
   > ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
 launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
@@ -91,7 +92,7 @@ rm ~/Library/LaunchAgents/dev.foxleoly.pi-buddy-sidecar.plist
 ```bash
 mkdir -p ~/.local/bin ~/.config/systemd/user
 mv pi-buddy-sidecar-linux-amd64 ~/.local/bin/pi-buddy-sidecar
-sed "s|@PANE@|w4:p1|g" service/pi-buddy-sidecar.service \
+cp service/pi-buddy-sidecar.service \
   > ~/.config/systemd/user/pi-buddy-sidecar.service
 systemctl --user daemon-reload
 systemctl --user enable --now pi-buddy-sidecar
@@ -106,11 +107,9 @@ systemctl --user disable --now pi-buddy-sidecar
 rm ~/.config/systemd/user/pi-buddy-sidecar.service
 ```
 
-Both units restart the sidecar if it exits, and both set `PATH` so the sidecar can find
-`herdr` — a launchd job and a user systemd unit otherwise start with a minimal `PATH`
-that omits Homebrew. The sidecar writes `~/.pi-buddy/ble.log` itself; the launchd plist
-additionally captures stdout/stderr in `~/.pi-buddy/sidecar.out.log` and
-`~/.pi-buddy/sidecar.err.log`.
+Both units restart the sidecar if it exits. The sidecar writes `~/.pi-buddy/ble.log`
+itself; the launchd plist additionally captures stdout/stderr in
+`~/.pi-buddy/sidecar.out.log` and `~/.pi-buddy/sidecar.err.log`.
 
 ## How the device finds the sidecar
 

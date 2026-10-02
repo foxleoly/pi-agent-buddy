@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -46,9 +45,8 @@ func bleLogf(format string, a ...any) { fmt.Fprintf(bleLogW, format, a...) }
 func main() {
 	var (
 		sessionPath string
-		herdrBin    string
+		piPid       int
 		act         string
-		target      string
 		approveText string
 		denyText    string
 		execAct     bool
@@ -59,13 +57,12 @@ func main() {
 		token       string
 		showToken   bool
 	)
-	flag.StringVar(&sessionPath, "session", "", "pi session JSONL path (default: herdr focus / $PI_SESSION_FILE)")
-	flag.StringVar(&herdrBin, "herdr", "herdr", "herdr binary path")
+	flag.StringVar(&sessionPath, "session", "", "pi session JSONL path (default: the published session, then $PI_SESSION_FILE)")
+	flag.IntVar(&piPid, "pi-pid", 0, "follow this pi process (default: the most recently updated one)")
 	flag.StringVar(&act, "act", "", "perform a device act now: approve|deny|interrupt (dry-run unless --exec)")
-	flag.StringVar(&target, "target", "", "herdr agent target (pane id, e.g. w4:p9); default = focused agent")
 	flag.StringVar(&approveText, "approve", "", "text sent on approve (default yes)")
 	flag.StringVar(&denyText, "deny", "", "text sent on deny (default no)")
-	flag.BoolVar(&execAct, "exec", false, "actually run the herdr act command (default: print only)")
+	flag.BoolVar(&execAct, "exec", false, "actually run the act (default: print only)")
 	flag.BoolVar(&usbMode, "usb", false, "run the tethered USB data loop: push heartbeats to /dev/cu.*, apply device acts")
 	flag.StringVar(&usbPath, "usb-path", "/dev/cu.usbmodem1101", "USB-Serial-JTAG device for --usb")
 	flag.BoolVar(&wsMode, "ws", false, "run the untethered WebSocket server: advertise mDNS _pibuddy._tcp, push heartbeats, apply device acts")
@@ -92,33 +89,21 @@ func main() {
 	}
 
 	if wsMode {
-		runWS(wsAddr, target, approveText, denyText, herdrBin, token)
+		runWS(wsAddr, approveText, denyText, token, piPid)
 		return
 	}
 
 	if usbMode {
-		runUSB(usbPath, target, approveText, denyText, herdrBin)
+		runUSB(usbPath, approveText, denyText, piPid)
 		return
 	}
 
-	snap, focus := loadSnapshot(herdrBin)
-	agentsTotal, agentsWorking := 0, 0
-	if snap != nil {
-		agentsTotal, agentsWorking = snap.AgentSummary()
-	}
+	session := loadSession(piPid)
 
 	if act != "" {
-		t := target
-		if t == "" && focus != nil {
-			t = focus.PaneID
-		}
-		if t == "" {
-			fmt.Fprintln(os.Stderr, "error: no target (set --target or have a focused herdr agent)")
-			os.Exit(2)
-		}
-		fmt.Fprintf(os.Stderr, "act: %s -> %s\n", PreviewAct(act, t, approveText, denyText, herdrBin), t)
+		fmt.Fprintf(os.Stderr, "act: %s\n", PreviewAct(act, approveText, denyText))
 		if execAct {
-			out, err := ExecAct(act, t, approveText, denyText, herdrBin)
+			out, err := RunAct(act, approveText, denyText)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "act failed:", err, out)
 				os.Exit(1)
@@ -129,8 +114,8 @@ func main() {
 	}
 
 	path := sessionPath
-	if path == "" && focus != nil {
-		path = focus.AgentSession.Value
+	if path == "" && session != nil {
+		path = session.SessionFile
 	}
 	if path == "" {
 		path = os.Getenv("PI_SESSION_FILE")
@@ -138,28 +123,18 @@ func main() {
 
 	ev := aggregateFileWindow(path, time.Time{}, time.Time{})
 	applyDailyUsage(&ev)
-	hb := BuildHeartbeat(focus, ev, agentsTotal, agentsWorking)
+	hb := BuildHeartbeat(session, ev)
 
-	if focus != nil {
-		fmt.Fprintf(os.Stderr, "focus: %s (%s) cwd=%s jsonl=%s\n",
-			focus.TerminalTitle, focus.AgentStatus, focus.Cwd, focus.AgentSession.Value)
+	if session != nil {
+		fmt.Fprintf(os.Stderr, "session: pi pid %d (%s) cwd=%s jsonl=%s\n",
+			session.PID, session.State(), session.Cwd, session.SessionFile)
+	} else {
+		fmt.Fprintln(os.Stderr, "warn: no pi session published; is the pi-buddy extension installed?")
 	}
 	if path == "" {
 		fmt.Fprintln(os.Stderr, "warn: no session JSONL found; emitting state-only heartbeat")
 	}
 	fmt.Println(MustJSON(hb))
-}
-
-func loadSnapshot(bin string) (*HerdrSnapshot, *AgentState) {
-	out, err := exec.Command(bin, "api", "snapshot").Output()
-	if err != nil {
-		return nil, nil
-	}
-	var s HerdrSnapshot
-	if err := json.Unmarshal(out, &s); err != nil {
-		return nil, nil
-	}
-	return &s, s.Focus()
 }
 
 // tailRecords reads the last n JSONL lines and decodes each top-level object.
@@ -310,38 +285,21 @@ type deviceAct struct {
 	Tool string `json:"tool"`
 }
 
-func handleAct(a deviceAct, target, approveText, denyText, herdrBin string) {
+func handleAct(a deviceAct, approveText, denyText string) {
 	kind := a.Kind
-	if target == "" {
-		if _, focus := loadSnapshot(herdrBin); focus != nil {
-			target = focus.PaneID
-		}
-	}
-	if target == "" {
-		bleLogf("act %s ignored: no herdr target\n", kind)
-		return
-	}
-	bleLogf("device act: %s -> %s\n", PreviewAct(kind, target, approveText, denyText, herdrBin), target)
-	if out, err := ExecAct(kind, target, approveText, denyText, herdrBin); err != nil {
+	bleLogf("device act: %s -> %s\n", PreviewAct(kind, approveText, denyText), kind)
+	if out, err := RunAct(kind, approveText, denyText); err != nil {
 		bleLogf("act failed: %s %s\n", err, out)
 	} else {
 		bleLogf("act ok: %s\n", out)
 	}
 }
 
-// sessionPathOf resolves the JSONL path from a focus (or $PI_SESSION_FILE).
-func sessionPathOf(focus *AgentState) string {
-	if focus != nil {
-		return focus.AgentSession.Value
+// sessionPathOf resolves the JSONL path from the published session (or
+// $PI_SESSION_FILE).
+func sessionPathOf(session *SessionState) string {
+	if session != nil && session.SessionFile != "" {
+		return session.SessionFile
 	}
 	return os.Getenv("PI_SESSION_FILE")
-}
-
-// snapOrZeroAgents returns total agents from a snapshot (0 when nil).
-func snapOrZeroAgents(s *HerdrSnapshot) int {
-	if s == nil {
-		return 0
-	}
-	total, _ := s.AgentSummary()
-	return total
 }

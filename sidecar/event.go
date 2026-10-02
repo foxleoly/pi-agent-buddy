@@ -1,7 +1,7 @@
 package main
 
-// Pure, host-testable logic for the pi-buddy sidecar: parse herdr snapshot
-// JSON and aggregate pi session JSONL records into a heartbeat. No I/O here.
+// Pure, host-testable logic for the pi-buddy sidecar: aggregate pi session
+// JSONL records into a heartbeat. No I/O here.
 
 import (
 	"encoding/json"
@@ -9,75 +9,7 @@ import (
 	"time"
 )
 
-// AgentState is one entry in herdr's snapshot.agents.
-type AgentState struct {
-	Agent         string `json:"agent"`
-	AgentStatus   string `json:"agent_status"`
-	Cwd           string `json:"cwd"`
-	TerminalTitle string `json:"terminal_title"`
-	Focused       bool   `json:"focused"`
-	PaneID        string `json:"pane_id"`
-	AgentSession  struct {
-		Value string `json:"value"`
-	} `json:"agent_session"`
-}
-
-// HerdrSnapshot mirrors the `herdr api snapshot` result.
-type HerdrSnapshot struct {
-	ID     string `json:"id"`
-	Result struct {
-		Snapshot struct {
-			Agents             []AgentState `json:"agents"`
-			FocusedPaneID      string       `json:"focused_pane_id"`
-			FocusedWorkspaceID string       `json:"focused_workspace_id"`
-		} `json:"snapshot"`
-	} `json:"result"`
-}
-
-// Focus returns the agent matching the focused pane (or the first working one).
-func (s HerdrSnapshot) Focus() *AgentState {
-	snap := s.Result.Snapshot
-	for i := range snap.Agents {
-		if snap.Agents[i].Focused || snap.Agents[i].PaneID == snap.FocusedPaneID {
-			return &snap.Agents[i]
-		}
-	}
-	for i := range snap.Agents {
-		if snap.Agents[i].AgentStatus == "working" {
-			return &snap.Agents[i]
-		}
-	}
-	if len(snap.Agents) > 0 {
-		return &snap.Agents[0]
-	}
-	return nil
-}
-
-// AgentSummary counts herdr agents by status (for the sub-agent line).
-func (s HerdrSnapshot) AgentSummary() (total, working int) {
-	for _, a := range s.Result.Snapshot.Agents {
-		total++
-		if a.AgentStatus == "working" {
-			working++
-		}
-	}
-	return total, working
-}
-
-// NormalizeAgentState maps herdr's agent_status to the buddy state vocabulary.
-func NormalizeAgentState(status string) string {
-	switch status {
-	case "working":
-		return "running"
-	case "idle":
-		return "idle"
-	case "unknown", "":
-		return "offline"
-	default:
-		return status
-	}
-}
-
+// Events is the aggregate of the pi session JSONL records we have read.
 // Events is the aggregation of a pi session JSONL for one heartbeat.
 type Events struct {
 	Model        string
@@ -272,59 +204,57 @@ func toFloat(v any) (float64, bool) {
 
 // Heartbeat is the pi-version payload pushed to the device over NUS RX.
 type Heartbeat struct {
-	Cmd         string  `json:"cmd"`
-	Model       string  `json:"model"`
-	Provider    string  `json:"provider,omitempty"`
-	State       string  `json:"state"`
-	Cwd         string  `json:"cwd,omitempty"`
-	Title       string  `json:"title,omitempty"`
-	Tool        string  `json:"tool,omitempty"`
-	Arg         string  `json:"arg,omitempty"`
-	ResultOK    *bool   `json:"result_ok,omitempty"`
-	Thinking    bool    `json:"thinking,omitempty"`
-	SubTotal    int     `json:"sub_total,omitempty"`
-	SubWorking  int     `json:"sub_working,omitempty"`
-	Tokens      uint64  `json:"tokens"`
-	InTokens    uint64  `json:"in_tokens,omitempty"`
-	OutTokens   uint64  `json:"out_tokens,omitempty"`
-	CacheTokens uint64  `json:"cache_tokens,omitempty"`
-	Tokens7d    uint64  `json:"tokens_7d,omitempty"`
-	Tokens30d   uint64  `json:"tokens_30d,omitempty"`
-	Cost        float64 `json:"cost"`
-	StopReason  string  `json:"stop_reason,omitempty"`
+	Cmd          string  `json:"cmd"`
+	Model        string  `json:"model"`
+	Provider     string  `json:"provider,omitempty"`
+	State        string  `json:"state"`
+	Cwd          string  `json:"cwd,omitempty"`
+	Title        string  `json:"title,omitempty"`
+	Tool         string  `json:"tool,omitempty"`
+	Arg          string  `json:"arg,omitempty"`
+	ResultOK     *bool   `json:"result_ok,omitempty"`
+	Thinking     bool    `json:"thinking,omitempty"`
+	SubAvailable bool    `json:"sub_available"`
+	SubTotal     int     `json:"sub_total,omitempty"`
+	SubWorking   int     `json:"sub_working,omitempty"`
+	Tokens       uint64  `json:"tokens"`
+	InTokens     uint64  `json:"in_tokens,omitempty"`
+	OutTokens    uint64  `json:"out_tokens,omitempty"`
+	CacheTokens  uint64  `json:"cache_tokens,omitempty"`
+	Tokens7d     uint64  `json:"tokens_7d,omitempty"`
+	Tokens30d    uint64  `json:"tokens_30d,omitempty"`
+	Cost         float64 `json:"cost"`
+	StopReason   string  `json:"stop_reason,omitempty"`
 }
 
-// BuildHeartbeat composes a heartbeat from herdr focus + JSONL events.
-func BuildHeartbeat(focus *AgentState, ev Events, subTotal, subWorking int) Heartbeat {
-	state := "offline"
-	cwd, title, jsonl := "", "", ""
-	if focus != nil {
-		state = NormalizeAgentState(focus.AgentStatus)
-		cwd = focus.Cwd
-		title = focus.TerminalTitle
-		jsonl = focus.AgentSession.Value
-		_ = jsonl
+// BuildHeartbeat composes a heartbeat from the published session state and the
+// JSONL events. Sub-agent counts are not available once herdr is gone, so
+// SubAvailable is always false and the device shows the count as unknown.
+func BuildHeartbeat(session *SessionState, ev Events) Heartbeat {
+	cwd, title := "", ""
+	if session != nil {
+		cwd = session.Cwd
+		title = session.Title
 	}
 	hb := Heartbeat{
-		Cmd:         "hb",
-		Model:       ev.Model,
-		Provider:    ev.Provider,
-		State:       state,
-		Cwd:         cwd,
-		Title:       title,
-		Tool:        ev.LastTool,
-		Arg:         ev.LastArg,
-		Thinking:    ev.Thinking,
-		SubTotal:    subTotal,
-		SubWorking:  subWorking,
-		Tokens:      ev.Tokens,
-		InTokens:    ev.InTokens,
-		OutTokens:   ev.OutTokens,
-		CacheTokens: ev.CacheTokens,
-		Tokens7d:    ev.Tokens7d,
-		Tokens30d:   ev.Tokens30d,
-		Cost:        ev.Cost,
-		StopReason:  ev.StopReason,
+		Cmd:          "hb",
+		Model:        ev.Model,
+		Provider:     ev.Provider,
+		State:        session.State(),
+		Cwd:          cwd,
+		Title:        title,
+		Tool:         ev.LastTool,
+		Arg:          ev.LastArg,
+		Thinking:     ev.Thinking,
+		SubAvailable: false,
+		Tokens:       ev.Tokens,
+		InTokens:     ev.InTokens,
+		OutTokens:    ev.OutTokens,
+		CacheTokens:  ev.CacheTokens,
+		Tokens7d:     ev.Tokens7d,
+		Tokens30d:    ev.Tokens30d,
+		Cost:         ev.Cost,
+		StopReason:   ev.StopReason,
 	}
 	if ev.LastResultOK != nil {
 		hb.ResultOK = ev.LastResultOK
