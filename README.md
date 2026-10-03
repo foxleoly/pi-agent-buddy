@@ -134,3 +134,9 @@ from a live link.
 - The sidecar is the computer half only; it never talks to the device's hardware
   directly. The device firmware is distributed separately.
 - MIT licensed — see [LICENSE](LICENSE).
+
+## Contact
+
+Questions, bug reports and ideas: open an issue, or write to
+`bGVvQGZveGxlb2x5Lmxpbms=`. That is the address in base64 — decode it to read it;
+it is encoded only to keep address scrapers away.

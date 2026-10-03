@@ -125,3 +125,8 @@ sidecar 还会把链路状态发布到 `~/.pi-buddy/status.json`（`connected`�
 - 纯 Go、无 cgo：macOS、Linux、Windows 均可构建运行。
 - sidecar 只是电脑侧的一半，不会直接接触设备硬件；设备固件另行分发。
 - 采用 MIT 许可证 —— 见 [LICENSE](LICENSE)。
+
+## 联系
+
+问题、反馈与想法：开 issue，或写信到 `bGVvQGZveGxlb2x5Lmxpbms=`。
+那是邮箱地址的 base64，解一下就能看；编码只是为了挡爬虫。
